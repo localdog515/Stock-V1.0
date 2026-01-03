@@ -1,0 +1,10 @@
+streamlit
+yfinance
+mplfinance
+google-generativeai
+pandas
+numpy
+requests
+twstock
+lxml
+pillow
