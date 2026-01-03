@@ -12,11 +12,11 @@ import pandas as pd
 st.set_page_config(page_title="SMC 戰略終端", layout="wide", page_icon="📈")
 st.markdown(tools.UI_CSS, unsafe_allow_html=True)
 
-# === 重要：若要發布到網路，這裡建議從 st.secrets 讀取密碼，若無則用預設 ===
+# 嘗試從 Secrets 讀取密碼 (雲端部署用)，否則使用預設
 try:
     APP_PASSWORD = st.secrets["APP_PASSWORD"]
 except:
-    APP_PASSWORD = "bro" # 本地預設密碼
+    APP_PASSWORD = "bro"
 
 def check_password():
     if st.session_state.get("password_correct", False): return True
@@ -42,7 +42,7 @@ if check_password():
     tools.init_db()
     
     c1, c2 = st.columns([3, 1])
-    with c1: st.markdown("## 🚀 SMC 賽博戰略終端 (V31.0)")
+    with c1: st.markdown("## 🚀 SMC 賽博戰略終端 (V31.1)")
     with c2:
         with st.expander("📖 技術指標百科 (Wiki)"):
             st.markdown(tools.WIKI_HTML, unsafe_allow_html=True)
@@ -58,6 +58,9 @@ if check_password():
     st.sidebar.header("🕹️ 戰略指揮中心")
     app_mode = st.sidebar.radio("模式", ["🔍 深度戰情室", "🎯 市場雷達", "⚙️ 清單管理", "📂 歷史戰報"])
 
+    # ==========================================
+    # 功能 A: 深度戰情室 (Deep Dive)
+    # ==========================================
     if app_mode == "🔍 深度戰情室":
         st.sidebar.markdown("---")
         stock_id = st.sidebar.text_input("輸入代號 (例如 2330)", "2330")
@@ -157,7 +160,6 @@ if check_password():
                                         tools.save_history(stock_id, stock_id, curr_price, trend, "HTML_REPORT")
                             except Exception as e: st.error(f"AI Error: {e}")
 
-                    # 圖表牆 (含趨勢線)
                     st.markdown("### 🕯️ 多週期戰略圖表")
                     tabs = st.tabs(["週線", "日線", "4小時", "1小時", "15分"])
                     tfs = ["1wk", "1d", "1h", "1h", "15m"]
@@ -167,21 +169,17 @@ if check_password():
                             _, df_tf = tools.fetch_data_by_timeframe(stock_id, tfs[i])
                             if not df_tf.empty:
                                 df_tf, _ = tools.calculate_technicals(df_tf)
-                                recent = df_tf.tail(120) # 顯示多一點 K 棒以便畫線
+                                recent = df_tf.tail(120)
                                 h = recent['High'].max(); l = recent['Low'].min()
                                 f618 = h - (h-l)*0.618; f05 = (h+l)/2; f382 = h - (h-l)*0.382
                                 
-                                # 計算藍色上升趨勢線座標
                                 trend_points = tools.calculate_support_line(recent)
-
-                                # 畫線設定
                                 fib_lines = dict(hlines=[f618, f05, f382], colors=['#00FFA3', 'gray', '#FF4B4B'], linewidths=[1.5, 0.5, 1.0], alpha=0.7)
                                 mc = mpf.make_marketcolors(up='#00FFA3', down='#FF4B4B', edge='inherit', wick='inherit', volume='in')
                                 s = mpf.make_mpf_style(base_mpf_style='nightclouds', marketcolors=mc, gridstyle=':', y_on_right=True, facecolor='#161b22')
                                 
                                 title_str = f"\n{stock_id} ({tfs[i]}) | TP(0.618): {f618:.1f} | SL(0.382): {f382:.1f}"
                                 
-                                # 如果有找到趨勢線，就畫出來 (alines)
                                 if trend_points:
                                     fig, ax = mpf.plot(recent, type='candle', style=s, hlines=fib_lines, 
                                                        alines=dict(alines=trend_points, colors=['#44a4f2'], linewidths=1.5),
@@ -194,4 +192,70 @@ if check_password():
                                 st.caption("🟦 **藍線**: 上升趨勢線 (自動偵測支撐) | 🟩 **TP**: 0.618 黃金口袋 | 🟥 **SL**: 0.382 止損位")
 
             except Exception as e: st.error(f"System Error: {e}")
-    # ... (其他頁面省略)
+
+    # ==========================================
+    # 功能 B: 市場雷達 (Radar) - 復活！
+    # ==========================================
+    elif app_mode == "🎯 市場雷達":
+        st.header("🎯 戰略雷達")
+        watch_lists = tools.load_watchlists()
+        if watch_lists:
+            c1, c2 = st.columns([1,3])
+            with c1:
+                g = st.selectbox("選擇族群", list(watch_lists.keys()))
+                if st.button("啟動掃描"):
+                    res = []
+                    bar = st.progress(0)
+                    targets = watch_lists[g]
+                    for i, c in enumerate(targets):
+                        try:
+                            # 這裡預設掃描日K
+                            s_obj, df = tools.fetch_data_by_timeframe(c.strip(), "1d")
+                            if not df.empty:
+                                df, tr = tools.calculate_technicals(df)
+                                cur = df.iloc[-1]['Close']; hi = df['High'].tail(60).max(); lo = df['Low'].tail(60).min()
+                                fib = hi - (hi-lo)*0.618
+                                # 簡單篩選：接近 0.618 黃金位
+                                status = ""
+                                if cur <= fib * 1.05 and cur >= fib * 0.95:
+                                    status = "🔥 接近黃金位"
+                                elif "多頭" in tr:
+                                    status = "📈 多頭排列"
+                                
+                                res.append({"代號":c, "現價": round(cur,1), "趨勢": tr, "訊號": status})
+                        except: pass
+                        bar.progress((i+1)/len(targets))
+                    bar.empty()
+                    if res: st.dataframe(pd.DataFrame(res), use_container_width=True)
+                    else: st.info("該族群目前無資料或連線失敗")
+        else: st.warning("請先到「清單管理」新增觀察名單")
+
+    # ==========================================
+    # 功能 C: 清單管理 (List) - 復活！
+    # ==========================================
+    elif app_mode == "⚙️ 清單管理":
+        st.header("⚙️ 觀察名單管理")
+        watch_lists = tools.load_watchlists()
+        with st.expander("查看目前名單", expanded=True):
+            for g, c in watch_lists.items(): st.text(f"【{g}】: {c}")
+        c1, c2 = st.columns(2)
+        with c1:
+            with st.form("add"):
+                n = st.text_input("群組名稱 (例如: 機器人概念股)"); c = st.text_area("代號 (以逗號隔開, 如: 2330,2317)")
+                if st.form_submit_button("儲存"): tools.save_watchlist(n, c); st.rerun()
+        with c2:
+            if watch_lists:
+                d = st.selectbox("刪除群組", list(watch_lists.keys()))
+                if st.button("確認刪除"): tools.delete_watchlist(d); st.rerun()
+
+    # ==========================================
+    # 功能 D: 歷史戰報 (History) - 復活！
+    # ==========================================
+    elif app_mode == "📂 歷史戰報":
+        st.header("📂 歷史戰報")
+        df = tools.load_history()
+        if not df.empty:
+            st.dataframe(df[['date', 'stock_name', 'status', 'ai_analysis']], use_container_width=True)
+            t = st.selectbox("刪除紀錄 (選擇代號)", df['stock_id'].unique())
+            if st.button("刪除"): tools.delete_history(t); st.rerun()
+        else: st.info("目前尚無存檔紀錄")
