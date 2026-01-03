@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 
 # ==========================================
-# 1. 靜態資源 (CSS & Wiki)
+# 1. 靜態資源 (CSS & Wiki) - 介面美化核心
 # ==========================================
 UI_CSS = """
 <style>
@@ -17,10 +17,14 @@ UI_CSS = """
         --accent-blue: #44a4f2; --accent-orange: #d29922; --border: #30363d;
     }
     .stApp { background-color: var(--bg-app); color: var(--text-main); }
+    
+    /* 輸入框高亮優化 */
     .stTextInput > div > div > input, .stSelectbox > div > div {
         background-color: var(--bg-input) !important; color: var(--text-main) !important;
         border: 1px solid #58a6ff !important; border-radius: 6px;
     }
+    
+    /* DailyDip 風格卡片 */
     .dd-box {
         background-color: #161b22; border: 1px solid var(--border);
         border-radius: 8px; padding: 20px; margin-bottom: 16px;
@@ -37,6 +41,7 @@ UI_CSS = """
     .dd-tag-short { background: rgba(218,54,51,0.2); color: #f85149; padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(218,54,51,0.4); font-size: 0.8rem; font-weight: bold;}
     ul { padding-left: 20px; margin: 5px 0; color: #e6edf3; } li { margin-bottom: 4px; }
     
+    /* Wiki 卡片 */
     .wiki-card { background-color: #1E2228; padding: 10px; border-radius: 6px; border-left: 3px solid #44a4f2; margin-bottom: 8px; }
     .wiki-title { color: #44a4f2; font-weight: bold; font-size: 1em; }
     .wiki-text { color: #8B949E; font-size: 0.85em; }
@@ -98,14 +103,43 @@ def delete_history(stock_id):
     conn.commit(); conn.close()
 
 # ==========================================
-# 3. 核心工具
+# 3. 核心工具 (趨勢線 & HTML 清洗)
 # ==========================================
 def clean_html_output(text):
+    """
+    移除 AI 輸出的 Markdown 標記和縮排，防止顯示亂碼。
+    """
     text = re.sub(r"```html", "", text, flags=re.IGNORECASE)
     text = re.sub(r"```", "", text)
     lines = text.split('\n')
     cleaned_lines = [line.strip() for line in lines if line.strip()]
     return '\n'.join(cleaned_lines)
+
+def calculate_support_line(df):
+    """
+    自動尋找藍色上升趨勢線 (Connecting Lows)
+    邏輯：找到區間最低點，然後連接右側的次低點。
+    """
+    try:
+        if len(df) < 10: return []
+        # 1. 找全區間最低點 (Point A)
+        min_idx = df['Low'].idxmin()
+        min_price = df['Low'].min()
+        
+        # 2. 找出 Point A 之後的數據
+        after_min = df.loc[min_idx:].iloc[1:]
+        
+        if len(after_min) > 5:
+             # 3. 在後半段找一個相對低點 (Point B)
+             second_min_idx = after_min['Low'].idxmin()
+             second_min_price = after_min['Low'].min()
+             
+             # 回傳座標 [(Date1, Price1), (Date2, Price2)]
+             return [(min_idx, min_price), (second_min_idx, second_min_price)]
+        else:
+            return []
+    except:
+        return []
 
 def fetch_data_by_timeframe(ticker, interval):
     period_map = {"15m": "60d", "1h": "730d", "1d": "2y", "1wk": "5y"}
@@ -149,29 +183,3 @@ def get_chips_silent(stock_id):
                 return {"外資": row.iloc[2], "投信": row.iloc[3], "自營": row.iloc[4], "status": "ok"}
     except: pass
     return {"status": "fail"}
-
-def calculate_support_line(df):
-    """
-    自動尋找支撐趨勢線 (Connecting Lows)
-    邏輯：找到區間最低點，然後連接右側的次低點。
-    """
-    try:
-        # 找全區間最低點
-        min_idx = df['Low'].idxmin()
-        min_price = df['Low'].min()
-        
-        # 找出最低點之後的數據
-        after_min = df.loc[min_idx:].iloc[1:] # 排除最低點本身
-        
-        if len(after_min) > 5: # 如果後面還有足夠數據
-             # 在後半段找一個相對低點 (簡單起見，找後半段的最低點)
-             second_min_idx = after_min['Low'].idxmin()
-             second_min_price = after_min['Low'].min()
-             
-             # 回傳兩個座標點 [(Date1, Price1), (Date2, Price2)]
-             return [(min_idx, min_price), (second_min_idx, second_min_price)]
-        else:
-            # 如果最低點在很後面，那就往前找一個點
-            return []
-    except:
-        return []
