@@ -12,11 +12,15 @@ import pandas as pd
 st.set_page_config(page_title="SMC 戰略終端", layout="wide", page_icon="📈")
 st.markdown(tools.UI_CSS, unsafe_allow_html=True)
 
-# 嘗試從 Secrets 讀取密碼 (雲端部署用)，否則使用預設
+# === 關鍵修改：從 Streamlit Secrets 讀取敏感資料 ===
+# 這樣就算上傳到 GitHub，別人也看不到你的密碼
 try:
     APP_PASSWORD = st.secrets["APP_PASSWORD"]
-except:
-    APP_PASSWORD = "bro"
+    GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
+except FileNotFoundError:
+    # 本地端測試時的備用方案 (建議在本地建一個 .streamlit/secrets.toml 檔案)
+    st.error("❌ 尚未設定 Secrets！請在 Streamlit Cloud 設定 APP_PASSWORD 與 GOOGLE_API_KEY。")
+    st.stop()
 
 def check_password():
     if st.session_state.get("password_correct", False): return True
@@ -30,10 +34,15 @@ def check_password():
         st.text_input("🔒 請輸入通關密碼", type="password", on_change=password_entered, key="password"); st.error("❌ 密碼錯誤"); return False
     return True
 
+# 設定 AI
 try:
-    if "GOOGLE_API_KEY" in st.secrets: GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
-    else: GOOGLE_API_KEY = "AIzaSyCPqvmQZka2R8jalkpTHHBl_VPvvgUFVrU"
-except: GOOGLE_API_KEY = "AIzaSyCPqvmQZka2R8jalkpTHHBl_VPvvgUFVrU"
+    genai.configure(api_key=GOOGLE_API_KEY)
+    valid_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    target = next((m for m in valid_models if 'flash' in m), valid_models[0] if valid_models else None)
+    if target: model = genai.GenerativeModel(target)
+except Exception as e:
+    st.error(f"AI 連線失敗: {e} (請檢查 API Key 是否正確)")
+    model = None
 
 # ---------------------------------------------------------
 # 1. 主程式邏輯
@@ -42,24 +51,16 @@ if check_password():
     tools.init_db()
     
     c1, c2 = st.columns([3, 1])
-    with c1: st.markdown("## 🚀 SMC 賽博戰略終端 (V31.1)")
+    with c1: st.markdown("## 🚀 SMC 賽博戰略終端 (V31.2 安全版)")
     with c2:
         with st.expander("📖 技術指標百科 (Wiki)"):
             st.markdown(tools.WIKI_HTML, unsafe_allow_html=True)
-
-    model = None
-    try:
-        genai.configure(api_key=GOOGLE_API_KEY)
-        valid_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        target = next((m for m in valid_models if 'flash' in m), valid_models[0] if valid_models else None)
-        if target: model = genai.GenerativeModel(target)
-    except: pass
 
     st.sidebar.header("🕹️ 戰略指揮中心")
     app_mode = st.sidebar.radio("模式", ["🔍 深度戰情室", "🎯 市場雷達", "⚙️ 清單管理", "📂 歷史戰報"])
 
     # ==========================================
-    # 功能 A: 深度戰情室 (Deep Dive)
+    # 功能 A: 深度戰情室
     # ==========================================
     if app_mode == "🔍 深度戰情室":
         st.sidebar.markdown("---")
@@ -194,7 +195,7 @@ if check_password():
             except Exception as e: st.error(f"System Error: {e}")
 
     # ==========================================
-    # 功能 B: 市場雷達 (Radar) - 復活！
+    # 功能 B: 市場雷達
     # ==========================================
     elif app_mode == "🎯 市場雷達":
         st.header("🎯 戰略雷達")
@@ -209,29 +210,24 @@ if check_password():
                     targets = watch_lists[g]
                     for i, c in enumerate(targets):
                         try:
-                            # 這裡預設掃描日K
                             s_obj, df = tools.fetch_data_by_timeframe(c.strip(), "1d")
                             if not df.empty:
                                 df, tr = tools.calculate_technicals(df)
                                 cur = df.iloc[-1]['Close']; hi = df['High'].tail(60).max(); lo = df['Low'].tail(60).min()
                                 fib = hi - (hi-lo)*0.618
-                                # 簡單篩選：接近 0.618 黃金位
                                 status = ""
-                                if cur <= fib * 1.05 and cur >= fib * 0.95:
-                                    status = "🔥 接近黃金位"
-                                elif "多頭" in tr:
-                                    status = "📈 多頭排列"
-                                
+                                if cur <= fib * 1.05 and cur >= fib * 0.95: status = "🔥 接近黃金位"
+                                elif "多頭" in tr: status = "📈 多頭排列"
                                 res.append({"代號":c, "現價": round(cur,1), "趨勢": tr, "訊號": status})
                         except: pass
                         bar.progress((i+1)/len(targets))
                     bar.empty()
                     if res: st.dataframe(pd.DataFrame(res), use_container_width=True)
-                    else: st.info("該族群目前無資料或連線失敗")
-        else: st.warning("請先到「清單管理」新增觀察名單")
+                    else: st.info("該族群目前無資料")
+        else: st.warning("請先新增清單")
 
     # ==========================================
-    # 功能 C: 清單管理 (List) - 復活！
+    # 功能 C & D: 清單與歷史
     # ==========================================
     elif app_mode == "⚙️ 清單管理":
         st.header("⚙️ 觀察名單管理")
@@ -241,21 +237,18 @@ if check_password():
         c1, c2 = st.columns(2)
         with c1:
             with st.form("add"):
-                n = st.text_input("群組名稱 (例如: 機器人概念股)"); c = st.text_area("代號 (以逗號隔開, 如: 2330,2317)")
+                n = st.text_input("名稱"); c = st.text_area("代號")
                 if st.form_submit_button("儲存"): tools.save_watchlist(n, c); st.rerun()
         with c2:
             if watch_lists:
                 d = st.selectbox("刪除群組", list(watch_lists.keys()))
                 if st.button("確認刪除"): tools.delete_watchlist(d); st.rerun()
 
-    # ==========================================
-    # 功能 D: 歷史戰報 (History) - 復活！
-    # ==========================================
     elif app_mode == "📂 歷史戰報":
         st.header("📂 歷史戰報")
         df = tools.load_history()
         if not df.empty:
             st.dataframe(df[['date', 'stock_name', 'status', 'ai_analysis']], use_container_width=True)
-            t = st.selectbox("刪除紀錄 (選擇代號)", df['stock_id'].unique())
+            t = st.selectbox("刪除紀錄", df['stock_id'].unique())
             if st.button("刪除"): tools.delete_history(t); st.rerun()
-        else: st.info("目前尚無存檔紀錄")
+        else: st.info("尚無紀錄")
