@@ -1,3 +1,4 @@
+# V33.0 Force Update
 import streamlit as st
 import yfinance as yf
 import mplfinance as mpf
@@ -198,7 +199,7 @@ if check_password():
             except Exception as e: st.error(f"System Error: {e}")
 
     # =========================================================
-    # 功能 B: 市場雷達 (Market Radar) - 獨立的 IF 區塊，不再縮排錯誤
+    # 功能 B: 市場雷達 (Market Radar)
     # =========================================================
     if app_mode == "🎯 市場雷達":
         st.header("🎯 戰略雷達")
@@ -228,7 +229,6 @@ if check_password():
                             
                             res.append({"代號":c, "現價": round(cur,1), "趨勢": tr, "訊號": status})
                     except Exception as e:
-                        # 錯誤顯影
                         print(f"Error scanning {c}: {e}")
                     
                     bar.progress((i+1)/len(targets))
@@ -242,7 +242,7 @@ if check_password():
             st.warning("請先到「清單管理」新增觀察名單")
 
     # =========================================================
-    # 功能 C: 清單管理 (Watchlist) - 獨立的 IF 區塊
+    # 功能 C: 清單管理 (Watchlist)
     # =========================================================
     if app_mode == "⚙️ 清單管理":
         st.header("⚙️ 觀察名單管理")
@@ -267,7 +267,7 @@ if check_password():
                     st.rerun()
 
     # =========================================================
-    # 功能 D: 歷史戰報 (History) - 獨立的 IF 區塊
+    # 功能 D: 歷史戰報 (History)
     # =========================================================
     if app_mode == "📂 歷史戰報":
         st.header("📂 歷史戰報")
