@@ -5,6 +5,7 @@ import requests
 import sqlite3
 import re
 from datetime import datetime
+import time # 新增 time 模組用於重試
 
 # ==========================================
 # 1. 靜態資源 (CSS & Wiki)
@@ -51,6 +52,9 @@ WIKI_HTML = """
 </div>
 """
 
+# ==========================================
+# 2. 資料庫管理
+# ==========================================
 def init_db():
     conn = sqlite3.connect('smc_data.db'); c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS history (date TEXT, stock_id TEXT, stock_name TEXT, price REAL, status TEXT, ai_analysis TEXT)''')
@@ -93,6 +97,9 @@ def delete_history(stock_id):
     c.execute("DELETE FROM history WHERE stock_id=?", (stock_id,))
     conn.commit(); conn.close()
 
+# ==========================================
+# 3. 核心工具 (強化抓取版)
+# ==========================================
 def clean_html_output(text):
     text = re.sub(r"```html", "", text, flags=re.IGNORECASE)
     text = re.sub(r"```", "", text)
@@ -114,16 +121,34 @@ def calculate_support_line(df):
     except: return []
 
 def fetch_data_by_timeframe(ticker, interval):
+    """
+    強化版數據抓取：支援自動重試與 .TW/.TWO 輪詢
+    """
     period_map = {"15m": "60d", "1h": "730d", "1d": "2y", "1wk": "5y"}
     period = period_map.get(interval, "1y")
-    try:
-        stock = yf.Ticker(f"{ticker}.TW")
-        df = stock.history(period=period, interval=interval)
-        if df.empty:
-            stock = yf.Ticker(f"{ticker}.TWO")
+    
+    # 移除空白，確保代號乾淨
+    ticker = str(ticker).strip()
+    
+    suffixes = ['.TW', '.TWO'] # 上市或上櫃
+    
+    for suffix in suffixes:
+        try:
+            full_ticker = f"{ticker}{suffix}"
+            stock = yf.Ticker(full_ticker)
             df = stock.history(period=period, interval=interval)
-        return stock, df
-    except: return None, pd.DataFrame()
+            
+            if not df.empty:
+                return stock, df
+                
+            # 如果沒抓到，休息 0.5 秒再試下一個後綴
+            time.sleep(0.5)
+            
+        except Exception as e:
+            print(f"Error fetching {full_ticker}: {e}")
+            continue
+            
+    return None, pd.DataFrame()
 
 def calculate_technicals(df):
     if df.empty: return df, "無數據"
